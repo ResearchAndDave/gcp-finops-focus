@@ -11,7 +11,7 @@ SELECT
   COUNT(*) as total_rows,
   SUM(EffectiveCost) as total_effective_cost
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY usage_date
 ORDER BY usage_date DESC;
 
@@ -30,7 +30,7 @@ WITH focus_costs AS (
     SUM(EffectiveCost) as focus_effective_cost,
     SUM(ContractedCost) as focus_contracted_cost
   FROM `your-project.your-dataset.focus_v1_0`
-  WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+  WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   GROUP BY usage_date
 ),
 source_costs AS (
@@ -39,7 +39,7 @@ source_costs AS (
     SUM(cost) as source_cost,
     SUM(cost) + IFNULL(SUM((SELECT SUM(amount) FROM UNNEST(credits))), 0) as source_effective_cost
   FROM `your-project.your-dataset.gcp_billing_export_resource_v1_ACCOUNT`
-  WHERE DATE(usage_start_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+  WHERE DATE(usage_start_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   GROUP BY usage_date
 )
 SELECT
@@ -90,7 +90,7 @@ SELECT
   SUM(CASE WHEN PricingCategory IS NULL AND ChargeCategory = 'usage' THEN 1 ELSE 0 END) as null_pricing_category
 
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS);
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY);
 
 -- Expected: All null counts should be 0 except possibly null_consumed_qty for some SKUs
 
@@ -106,7 +106,7 @@ SELECT
   ROUND(AVG(EffectiveCost), 4) as avg_cost,
   COUNT(DISTINCT ServiceName) as distinct_services
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY ChargeCategory
 ORDER BY total_cost DESC;
 
@@ -125,7 +125,7 @@ SELECT
   ROUND(SUM(BilledCost), 2) as billed_cost,
   ROUND(SUM(EffectiveCost) - SUM(BilledCost), 2) as savings
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   AND ChargeCategory = 'usage'
 GROUP BY PricingCategory
 ORDER BY total_cost DESC;
@@ -145,7 +145,7 @@ SELECT
   COUNT(DISTINCT RegionId) as regions_used,
   COUNT(DISTINCT DATE(ChargePeriodStart)) as days_with_usage
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   AND ChargeCategory = 'usage'
 GROUP BY ServiceName
 ORDER BY total_cost DESC
@@ -165,7 +165,7 @@ SELECT
   ROUND(SUM(EffectiveCost), 2) as total_cost,
   COUNT(DISTINCT ServiceName) as distinct_services
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   AND RegionId IS NOT NULL
 GROUP BY RegionId, RegionName
 ORDER BY total_cost DESC
@@ -210,7 +210,7 @@ SELECT
   COUNT(DISTINCT CommitmentDiscountName) as distinct_commitment_names,
   ROUND(SUM(EffectiveCost), 2) as total_cost
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   AND CommitmentDiscountCategory IS NOT NULL
 GROUP BY CommitmentDiscountCategory
 ORDER BY total_cost DESC;
@@ -230,7 +230,7 @@ SELECT
   COUNT(DISTINCT ServiceName) as services_with_credits
 FROM `your-project.your-dataset.focus_v1_0`,
   UNNEST(x_Credits) as credit
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY usage_date, credit_type
 ORDER BY usage_date DESC, total_credit_amount;
 
@@ -248,7 +248,7 @@ SELECT
   ROUND(SUM(EffectiveCost), 2) as tagged_cost
 FROM `your-project.your-dataset.focus_v1_0`,
   UNNEST(Tags) as tag
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY tag_type
 ORDER BY tagged_cost DESC;
 
@@ -280,7 +280,7 @@ SELECT
   ROUND(SUM(EffectiveCost), 2) as total_cost,
   COUNT(DISTINCT ServiceName) as services
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   AND ResourceType IS NOT NULL
 GROUP BY ResourceType
 ORDER BY total_cost DESC
@@ -300,7 +300,7 @@ SELECT
   MIN(DATE(ChargePeriodStart)) as earliest_date,
   MAX(DATE(ChargePeriodStart)) as latest_date
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
 GROUP BY BillingCurrency
 ORDER BY total_cost DESC;
 
@@ -316,7 +316,7 @@ SELECT
   DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as month,
   ROUND(SUM(EffectiveCost), 2) as monthly_cost
 FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAYS)
+WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
 GROUP BY ServiceName, month
 ORDER BY month DESC, monthly_cost DESC;
 

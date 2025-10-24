@@ -471,33 +471,35 @@ WITH focus_costs AS (
   SELECT
     DATE(ChargePeriodStart) as usage_date,
     SUM(BilledCost) as focus_billed_cost,
-    SUM(EffectiveCost) as focus_effective_cost
+    SUM(EffectiveCost) as focus_effective_cost,
+    SUM(ContractedCost) as focus_contracted_cost
   FROM `your-project.your-dataset.focus_v1_0`
-  WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+  WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   GROUP BY usage_date
 ),
 source_costs AS (
   SELECT
     DATE(usage_start_time) as usage_date,
     SUM(cost) as source_cost,
-    SUM(cost) + SUM((SELECT SUM(amount) FROM UNNEST(credits))) as source_effective_cost
+    SUM(cost) + IFNULL(SUM((SELECT SUM(amount) FROM UNNEST(credits))), 0) as source_effective_cost
   FROM `your-project.your-dataset.gcp_billing_export_resource_v1_ACCOUNT`
-  WHERE DATE(usage_start_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAYS)
+  WHERE DATE(usage_start_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   GROUP BY usage_date
 )
 SELECT
-  f.usage_date,
-  f.focus_billed_cost,
-  s.source_cost,
-  f.focus_billed_cost - s.source_cost as cost_difference,
-  f.focus_effective_cost,
-  s.source_effective_cost
+  COALESCE(f.usage_date, s.usage_date) as usage_date,
+  ROUND(f.focus_billed_cost, 2) as focus_billed_cost,
+  ROUND(s.source_cost, 2) as source_cost,
+  ROUND(f.focus_billed_cost - s.source_cost, 4) as cost_difference,
+  ROUND(f.focus_effective_cost, 2) as focus_effective_cost,
+  ROUND(s.source_effective_cost, 2) as source_effective_cost,
+  ROUND(f.focus_effective_cost - s.source_effective_cost, 4) as effective_cost_difference
 FROM focus_costs f
-JOIN source_costs s USING (usage_date)
+FULL OUTER JOIN source_costs s USING (usage_date)
 ORDER BY usage_date DESC;
 ```
 
-Expected: Differences should be minimal (rounding differences only)
+Expected: cost_difference and effective_cost_difference should be < $0.01 (rounding only)
 
 ### 4.3 Check Field Population
 
