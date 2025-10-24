@@ -42,6 +42,18 @@ This repository contains SQL queries and documentation for implementing FOCUS (F
    - Sample data inspection
    - Cost type breakdown
 
+### FinOps Use Cases
+
+6. **`focus_use_cases_queries.sql`** - 20 production-ready FOCUS queries
+   - Total cloud spend overview
+   - Cost by service and region
+   - Commitment savings analysis
+   - Tag-based cost allocation
+   - Cost anomaly detection
+   - Month-over-month growth
+   - Budget tracking
+   - And 13 more common FinOps use cases
+
 ## Quick Start
 
 ### Prerequisites
