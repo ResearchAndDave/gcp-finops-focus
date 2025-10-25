@@ -54,6 +54,18 @@ This repository contains SQL queries and documentation for implementing FOCUS (F
    - Budget tracking
    - And 13 more common FinOps use cases
 
+7. **`focus_forecasting_queries.sql`** - 10 comprehensive forecasting queries
+   - Linear trend forecasts (3-month projections)
+   - Service-level forecasting with confidence intervals
+   - Seasonality-adjusted predictions
+   - Commitment expiration impact analysis
+   - Growth rate projections by service
+   - Resource-based capacity forecasting
+   - Budget runway analysis
+   - Team/project-level forecasts
+   - Quarterly variance analysis
+   - ML-ready dataset export for advanced forecasting
+
 ## Quick Start
 
 ### Prerequisites
