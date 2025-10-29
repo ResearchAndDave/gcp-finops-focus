@@ -1,0 +1,622 @@
+# MCP Toolbox Configuration for FOCUS BigQuery View
+# This configuration exposes FOCUS v1.0 cost queries as MCP tools
+# enabling natural language access to cloud cost data
+#
+# SETUP INSTRUCTIONS:
+# 1. Replace YOUR_PROJECT_ID with your GCP project ID
+# 2. Replace YOUR_DATASET with your BigQuery dataset name
+# 3. Replace YOUR_FOCUS_VIEW with your FOCUS view name (e.g., focus_v1_0)
+# 4. Ensure Application Default Credentials are configured:
+#    gcloud auth application-default login
+# 5. Run: ./toolbox --tools-file "mcp_tools.yaml"
+
+sources:
+  focus-bigquery:
+    kind: bigquery
+    project: YOUR_PROJECT_ID
+    location: us  # Change if your dataset is in a different location
+
+# ==============================================================================
+# COST ANALYSIS TOOLS
+# ==============================================================================
+
+tools:
+  # --------------------------------------------------------------------------
+  # Tool 1: Get Total Cloud Spend
+  # --------------------------------------------------------------------------
+  get_total_spend:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Get total cloud spend over a time period with monthly breakdown. Shows billed cost, effective cost, and savings from credits/discounts."
+    parameters:
+      - name: days_back
+        type: integer
+        description: "Number of days to look back (e.g., 30, 90, 365)"
+    statement: |
+      SELECT
+        DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as billing_month,
+        BillingCurrency as currency,
+        ROUND(SUM(BilledCost), 2) as total_billed_cost,
+        ROUND(SUM(EffectiveCost), 2) as total_effective_cost,
+        ROUND(SUM(BilledCost) - SUM(EffectiveCost), 2) as total_savings,
+        COUNT(DISTINCT SubAccountId) as number_of_accounts
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+      WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+        AND ChargeCategory = 'usage'
+      GROUP BY billing_month, currency
+      ORDER BY billing_month DESC;
+
+  # --------------------------------------------------------------------------
+  # Tool 2: Get Cost by Service
+  # --------------------------------------------------------------------------
+  get_cost_by_service:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Get cloud costs broken down by service. Shows which services are driving costs with percentages."
+    parameters:
+      - name: days_back
+        type: integer
+        description: "Number of days to look back (default 30)"
+      - name: limit_results
+        type: integer
+        description: "Number of top services to return (default 20)"
+    statement: |
+      SELECT
+        ServiceName,
+        ROUND(SUM(EffectiveCost), 2) as total_cost,
+        ROUND(AVG(EffectiveCost), 4) as avg_cost_per_charge,
+        COUNT(*) as number_of_charges,
+        ROUND(SUM(EffectiveCost) / (SELECT SUM(EffectiveCost)
+          FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+          WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+            AND ChargeCategory = 'usage') * 100, 2) as percent_of_total
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+      WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+        AND ChargeCategory = 'usage'
+      GROUP BY ServiceName
+      ORDER BY total_cost DESC
+      LIMIT @limit_results;
+
+  # --------------------------------------------------------------------------
+  # Tool 3: Get Cost by Region
+  # --------------------------------------------------------------------------
+  get_cost_by_region:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Get cloud costs broken down by GCP region. Useful for understanding geographic cost distribution."
+    parameters:
+      - name: days_back
+        type: integer
+        description: "Number of days to look back"
+    statement: |
+      SELECT
+        RegionId,
+        RegionName,
+        COUNT(DISTINCT ServiceName) as services_used,
+        ROUND(SUM(EffectiveCost), 2) as total_cost,
+        ROUND(AVG(EffectiveCost), 4) as avg_cost
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+      WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+        AND ChargeCategory = 'usage'
+        AND RegionId IS NOT NULL
+      GROUP BY RegionId, RegionName
+      ORDER BY total_cost DESC;
+
+  # --------------------------------------------------------------------------
+  # Tool 4: Get Daily Costs
+  # --------------------------------------------------------------------------
+  get_daily_costs:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Get daily cost trends with 7-day moving average. Useful for identifying spending patterns."
+    parameters:
+      - name: days_back
+        type: integer
+        description: "Number of days to look back"
+    statement: |
+      SELECT
+        DATE(ChargePeriodStart) as usage_date,
+        ROUND(SUM(EffectiveCost), 2) as daily_cost,
+        ROUND(AVG(SUM(EffectiveCost)) OVER (
+          ORDER BY DATE(ChargePeriodStart)
+          ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+        ), 2) as seven_day_avg,
+        COUNT(DISTINCT ServiceName) as services_used
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+      WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+        AND ChargeCategory = 'usage'
+      GROUP BY usage_date
+      ORDER BY usage_date DESC;
+
+  # --------------------------------------------------------------------------
+  # Tool 5: Find Cost Anomalies
+  # --------------------------------------------------------------------------
+  find_cost_anomalies:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Detect unusual cost spikes by service using statistical analysis (z-score > 1.5 indicates anomaly)."
+    parameters:
+      - name: lookback_days
+        type: integer
+        description: "Number of days to analyze for patterns (e.g., 30)"
+      - name: recent_days
+        type: integer
+        description: "Number of recent days to check for anomalies (e.g., 7)"
+    statement: |
+      WITH daily_service_costs AS (
+        SELECT
+          DATE(ChargePeriodStart) as usage_date,
+          ServiceName,
+          ROUND(SUM(EffectiveCost), 2) as daily_cost
+        FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+        WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @lookback_days DAY)
+          AND ChargeCategory = 'usage'
+        GROUP BY usage_date, ServiceName
+      ),
+      service_stats AS (
+        SELECT
+          ServiceName,
+          AVG(daily_cost) as avg_daily_cost,
+          STDDEV(daily_cost) as stddev_daily_cost
+        FROM daily_service_costs
+        GROUP BY ServiceName
+      )
+      SELECT
+        dsc.usage_date,
+        dsc.ServiceName,
+        dsc.daily_cost,
+        ROUND(ss.avg_daily_cost, 2) as avg_daily_cost,
+        ROUND((dsc.daily_cost - ss.avg_daily_cost) / NULLIF(ss.stddev_daily_cost, 0), 2) as z_score,
+        CASE
+          WHEN (dsc.daily_cost - ss.avg_daily_cost) / NULLIF(ss.stddev_daily_cost, 0) > 2 THEN 'High Anomaly'
+          WHEN (dsc.daily_cost - ss.avg_daily_cost) / NULLIF(ss.stddev_daily_cost, 0) > 1.5 THEN 'Moderate Anomaly'
+          ELSE 'Normal'
+        END as anomaly_severity
+      FROM daily_service_costs dsc
+      JOIN service_stats ss ON dsc.ServiceName = ss.ServiceName
+      WHERE dsc.usage_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @recent_days DAY)
+        AND (dsc.daily_cost - ss.avg_daily_cost) / NULLIF(ss.stddev_daily_cost, 0) > 1.5
+      ORDER BY z_score DESC;
+
+# ==============================================================================
+# FORECASTING TOOLS
+# ==============================================================================
+
+  # --------------------------------------------------------------------------
+  # Tool 6: Forecast Next Month
+  # --------------------------------------------------------------------------
+  forecast_next_month:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Forecast next month's total cloud spend based on linear trend from recent history."
+    parameters:
+      - name: history_days
+        type: integer
+        description: "Number of days of history to use for forecast (e.g., 90)"
+    statement: |
+      WITH daily_costs AS (
+        SELECT
+          DATE(ChargePeriodStart) as cost_date,
+          ROUND(SUM(EffectiveCost), 2) as daily_cost
+        FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+        WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @history_days DAY)
+          AND DATE(ChargePeriodStart) < CURRENT_DATE()
+          AND ChargeCategory = 'usage'
+        GROUP BY cost_date
+      ),
+      trend_analysis AS (
+        SELECT
+          AVG(daily_cost) as avg_daily_cost,
+          (SUM((DATE_DIFF(cost_date, DATE_SUB(CURRENT_DATE(), INTERVAL @history_days DAY), DAY)) * daily_cost) /
+           SUM(POW(DATE_DIFF(cost_date, DATE_SUB(CURRENT_DATE(), INTERVAL @history_days DAY), DAY), 2))) as daily_growth_rate
+        FROM daily_costs
+      )
+      SELECT
+        DATE_TRUNC(DATE_ADD(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH) as forecast_month,
+        ROUND(SUM(ta.avg_daily_cost + (ta.daily_growth_rate * DATE_DIFF(date_value, CURRENT_DATE(), DAY))), 2) as forecasted_cost,
+        ROUND(AVG(ta.avg_daily_cost), 2) as avg_daily_cost_base,
+        ROUND(AVG(ta.daily_growth_rate), 4) as daily_growth_rate
+      FROM UNNEST(GENERATE_DATE_ARRAY(
+        DATE_TRUNC(DATE_ADD(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH),
+        DATE_SUB(DATE_TRUNC(DATE_ADD(CURRENT_DATE(), INTERVAL 2 MONTH), MONTH), INTERVAL 1 DAY),
+        INTERVAL 1 DAY
+      )) as date_value
+      CROSS JOIN trend_analysis ta
+      GROUP BY forecast_month;
+
+  # --------------------------------------------------------------------------
+  # Tool 7: Forecast by Service
+  # --------------------------------------------------------------------------
+  forecast_by_service:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Forecast next month's cost for each service with confidence intervals."
+    parameters:
+      - name: history_days
+        type: integer
+        description: "Number of days to analyze (e.g., 60)"
+    statement: |
+      WITH historical_daily_avg AS (
+        SELECT
+          ServiceName,
+          AVG(daily_cost) as avg_daily_cost,
+          STDDEV(daily_cost) as stddev_daily_cost
+        FROM (
+          SELECT
+            ServiceName,
+            DATE(ChargePeriodStart) as cost_date,
+            SUM(EffectiveCost) as daily_cost
+          FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+          WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @history_days DAY)
+            AND DATE(ChargePeriodStart) < CURRENT_DATE()
+            AND ChargeCategory = 'usage'
+          GROUP BY ServiceName, cost_date
+        )
+        GROUP BY ServiceName
+      )
+      SELECT
+        ServiceName,
+        ROUND(avg_daily_cost, 2) as avg_daily_cost,
+        30 as days_in_next_month,
+        ROUND(avg_daily_cost * 30, 2) as forecasted_monthly_cost,
+        ROUND((avg_daily_cost - stddev_daily_cost) * 30, 2) as low_estimate,
+        ROUND((avg_daily_cost + stddev_daily_cost) * 30, 2) as high_estimate
+      FROM historical_daily_avg
+      WHERE avg_daily_cost > 1
+      ORDER BY forecasted_monthly_cost DESC;
+
+  # --------------------------------------------------------------------------
+  # Tool 8: Check Budget Runway
+  # --------------------------------------------------------------------------
+  check_budget_runway:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Calculate when budget will be exhausted based on current burn rate. Set monthly_budget parameter to your actual budget."
+    parameters:
+      - name: monthly_budget
+        type: float
+        description: "Your monthly budget amount in dollars (e.g., 10000.00)"
+    statement: |
+      WITH daily_spend AS (
+        SELECT
+          DATE(ChargePeriodStart) as spend_date,
+          ROUND(SUM(EffectiveCost), 2) as daily_cost
+        FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+        WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+          AND DATE(ChargePeriodStart) < CURRENT_DATE()
+          AND ChargeCategory = 'usage'
+        GROUP BY spend_date
+      ),
+      burn_rate AS (
+        SELECT
+          AVG(daily_cost) as avg_daily_burn,
+          MIN(daily_cost) as min_daily_burn,
+          MAX(daily_cost) as max_daily_burn
+        FROM daily_spend
+      ),
+      month_to_date_spend AS (
+        SELECT
+          ROUND(SUM(EffectiveCost), 2) as mtd_spend
+        FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+        WHERE DATE(ChargePeriodStart) >= DATE_TRUNC(CURRENT_DATE(), MONTH)
+          AND DATE(ChargePeriodStart) < CURRENT_DATE()
+          AND ChargeCategory = 'usage'
+      )
+      SELECT
+        ROUND(br.avg_daily_burn, 2) as avg_daily_burn_rate,
+        DATE_DIFF(
+          DATE_SUB(DATE_TRUNC(DATE_ADD(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH), INTERVAL 1 DAY),
+          CURRENT_DATE(),
+          DAY
+        ) + 1 as days_remaining_in_month,
+        ROUND(mtd.mtd_spend, 2) as month_to_date_spend,
+        ROUND(br.avg_daily_burn * (DATE_DIFF(
+          DATE_SUB(DATE_TRUNC(DATE_ADD(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH), INTERVAL 1 DAY),
+          CURRENT_DATE(),
+          DAY
+        ) + 1), 2) as forecasted_remaining_spend,
+        ROUND(mtd.mtd_spend + (br.avg_daily_burn * (DATE_DIFF(
+          DATE_SUB(DATE_TRUNC(DATE_ADD(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH), INTERVAL 1 DAY),
+          CURRENT_DATE(),
+          DAY
+        ) + 1)), 2) as forecasted_month_end_total,
+        @monthly_budget as monthly_budget,
+        ROUND(@monthly_budget - (mtd.mtd_spend + (br.avg_daily_burn * (DATE_DIFF(
+          DATE_SUB(DATE_TRUNC(DATE_ADD(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH), INTERVAL 1 DAY),
+          CURRENT_DATE(),
+          DAY
+        ) + 1))), 2) as projected_variance,
+        CASE
+          WHEN (mtd.mtd_spend + (br.avg_daily_burn * (DATE_DIFF(
+            DATE_SUB(DATE_TRUNC(DATE_ADD(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH), INTERVAL 1 DAY),
+            CURRENT_DATE(),
+            DAY
+          ) + 1))) > @monthly_budget
+          THEN CAST(FLOOR((@monthly_budget - mtd.mtd_spend) / NULLIF(br.avg_daily_burn, 0)) AS INT64)
+          ELSE (DATE_DIFF(
+            DATE_SUB(DATE_TRUNC(DATE_ADD(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH), INTERVAL 1 DAY),
+            CURRENT_DATE(),
+            DAY
+          ) + 1)
+        END as days_until_budget_exhausted
+      FROM burn_rate br
+      CROSS JOIN month_to_date_spend mtd;
+
+# ==============================================================================
+# OPTIMIZATION TOOLS
+# ==============================================================================
+
+  # --------------------------------------------------------------------------
+  # Tool 9: Find Commitment Savings
+  # --------------------------------------------------------------------------
+  find_commitment_savings:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Analyze savings from commitments (CUDs) and identify opportunities."
+    parameters:
+      - name: months_back
+        type: integer
+        description: "Number of months to analyze (e.g., 3)"
+    statement: |
+      SELECT
+        DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as month,
+        CommitmentDiscountCategory,
+        COUNT(DISTINCT CommitmentDiscountId) as number_of_commitments,
+        ROUND(SUM(BilledCost), 2) as billed_cost,
+        ROUND(SUM(EffectiveCost), 2) as effective_cost,
+        ROUND(SUM(BilledCost) - SUM(EffectiveCost), 2) as commitment_savings,
+        ROUND((SUM(BilledCost) - SUM(EffectiveCost)) / NULLIF(SUM(BilledCost), 0) * 100, 2) as savings_percentage
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+      WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @months_back MONTH)
+        AND CommitmentDiscountCategory IS NOT NULL
+      GROUP BY month, CommitmentDiscountCategory
+      ORDER BY month DESC, commitment_savings DESC;
+
+  # --------------------------------------------------------------------------
+  # Tool 10: Find Untagged Resources
+  # --------------------------------------------------------------------------
+  find_untagged_resources:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Identify resources that lack required cost allocation tags."
+    parameters:
+      - name: days_back
+        type: integer
+        description: "Number of days to analyze (e.g., 7)"
+    statement: |
+      WITH tagged_resources AS (
+        SELECT DISTINCT
+          ResourceId,
+          DATE(ChargePeriodStart) as usage_date
+        FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`,
+          UNNEST(Tags) as tag
+        WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+          AND tag.key IN ('environment', 'team', 'cost-center')
+      )
+      SELECT
+        f.ServiceName,
+        f.ResourceType,
+        f.ResourceId,
+        f.ResourceName,
+        f.RegionName,
+        ROUND(SUM(f.EffectiveCost), 2) as untagged_cost,
+        COUNT(DISTINCT DATE(f.ChargePeriodStart)) as days_active
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW` f
+      LEFT JOIN tagged_resources tr
+        ON f.ResourceId = tr.ResourceId
+        AND DATE(f.ChargePeriodStart) = tr.usage_date
+      WHERE DATE(f.ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+        AND f.ChargeCategory = 'usage'
+        AND f.ResourceId IS NOT NULL
+        AND tr.ResourceId IS NULL
+      GROUP BY f.ServiceName, f.ResourceType, f.ResourceId, f.ResourceName, f.RegionName
+      ORDER BY untagged_cost DESC
+      LIMIT 50;
+
+  # --------------------------------------------------------------------------
+  # Tool 11: Get Cost by Tag
+  # --------------------------------------------------------------------------
+  get_cost_by_tag:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Get costs broken down by specific tag key (e.g., team, environment, project)."
+    parameters:
+      - name: tag_key
+        type: string
+        description: "Tag key to analyze (e.g., 'team', 'environment', 'project')"
+      - name: days_back
+        type: integer
+        description: "Number of days to analyze"
+    statement: |
+      SELECT
+        tag.key as tag_key,
+        tag.value as tag_value,
+        COUNT(DISTINCT ResourceId) as tagged_resources,
+        ROUND(SUM(EffectiveCost), 2) as total_cost,
+        COUNT(DISTINCT ServiceName) as services_used
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`,
+        UNNEST(Tags) as tag
+      WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+        AND ChargeCategory = 'usage'
+        AND tag.key = @tag_key
+      GROUP BY tag_key, tag_value
+      ORDER BY total_cost DESC;
+
+  # --------------------------------------------------------------------------
+  # Tool 12: Compare Regional Pricing
+  # --------------------------------------------------------------------------
+  compare_regional_pricing:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Compare cost per unit across different regions for a specific service."
+    parameters:
+      - name: service_name
+        type: string
+        description: "Service name to compare (e.g., 'Compute Engine')"
+      - name: days_back
+        type: integer
+        description: "Number of days to analyze"
+    statement: |
+      SELECT
+        ServiceName,
+        RegionName,
+        ROUND(SUM(ConsumedQuantity), 2) as total_usage,
+        ConsumedUnit,
+        ROUND(SUM(EffectiveCost), 2) as total_cost,
+        ROUND(SUM(EffectiveCost) / NULLIF(SUM(ConsumedQuantity), 0), 6) as cost_per_unit
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+      WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+        AND ChargeCategory = 'usage'
+        AND ServiceName = @service_name
+        AND RegionName IS NOT NULL
+        AND ConsumedQuantity > 0
+      GROUP BY ServiceName, RegionName, ConsumedUnit
+      HAVING SUM(EffectiveCost) > 10
+      ORDER BY cost_per_unit;
+
+  # --------------------------------------------------------------------------
+  # Tool 13: Get Month over Month Growth
+  # --------------------------------------------------------------------------
+  get_month_over_month_growth:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Calculate month-over-month cost growth for all services."
+    parameters:
+      - name: months_back
+        type: integer
+        description: "Number of months to analyze (e.g., 6)"
+    statement: |
+      WITH monthly_costs AS (
+        SELECT
+          DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as month,
+          ServiceName,
+          ROUND(SUM(EffectiveCost), 2) as monthly_cost
+        FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+        WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @months_back MONTH)
+          AND ChargeCategory = 'usage'
+        GROUP BY month, ServiceName
+      )
+      SELECT
+        month,
+        ServiceName,
+        monthly_cost,
+        LAG(monthly_cost) OVER (PARTITION BY ServiceName ORDER BY month) as previous_month_cost,
+        ROUND(monthly_cost - LAG(monthly_cost) OVER (PARTITION BY ServiceName ORDER BY month), 2) as month_over_month_change,
+        ROUND((monthly_cost - LAG(monthly_cost) OVER (PARTITION BY ServiceName ORDER BY month)) /
+          NULLIF(LAG(monthly_cost) OVER (PARTITION BY ServiceName ORDER BY month), 0) * 100, 2) as percent_change
+      FROM monthly_costs
+      ORDER BY month DESC, monthly_cost DESC;
+
+  # --------------------------------------------------------------------------
+  # Tool 14: Get Top Resources by Cost
+  # --------------------------------------------------------------------------
+  get_top_resources:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Find the most expensive individual resources (VMs, disks, etc.)."
+    parameters:
+      - name: days_back
+        type: integer
+        description: "Number of days to analyze"
+      - name: limit_results
+        type: integer
+        description: "Number of top resources to return (e.g., 50)"
+    statement: |
+      SELECT
+        ResourceType,
+        ResourceId,
+        ResourceName,
+        ServiceName,
+        RegionName,
+        ROUND(SUM(EffectiveCost), 2) as total_cost,
+        ROUND(AVG(EffectiveCost), 4) as avg_daily_cost,
+        COUNT(DISTINCT DATE(ChargePeriodStart)) as days_active
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+      WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @days_back DAY)
+        AND ChargeCategory = 'usage'
+        AND ResourceId IS NOT NULL
+      GROUP BY ResourceType, ResourceId, ResourceName, ServiceName, RegionName
+      ORDER BY total_cost DESC
+      LIMIT @limit_results;
+
+  # --------------------------------------------------------------------------
+  # Tool 15: Analyze Credit Usage
+  # --------------------------------------------------------------------------
+  analyze_credit_usage:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Breakdown of all credits and discounts received by type."
+    parameters:
+      - name: months_back
+        type: integer
+        description: "Number of months to analyze"
+    statement: |
+      SELECT
+        DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as month,
+        credit.Type as credit_type,
+        COUNT(*) as number_of_credits,
+        ROUND(SUM(credit.Amount), 2) as total_credit_amount,
+        COUNT(DISTINCT ServiceName) as services_receiving_credits
+      FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`,
+        UNNEST(x_Credits) as credit
+      WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @months_back MONTH)
+      GROUP BY month, credit_type
+      ORDER BY month DESC, total_credit_amount;
+
+# ==============================================================================
+# TOOLSETS - Organized by Persona
+# ==============================================================================
+
+toolsets:
+  # Finance Team Tools
+  finance-tools:
+    - get_total_spend
+    - get_daily_costs
+    - check_budget_runway
+    - forecast_next_month
+    - get_month_over_month_growth
+    - analyze_credit_usage
+
+  # Engineering Team Tools
+  engineering-tools:
+    - get_cost_by_service
+    - get_cost_by_region
+    - get_top_resources
+    - compare_regional_pricing
+    - find_cost_anomalies
+    - get_cost_by_tag
+
+  # FinOps Practitioner Tools
+  finops-tools:
+    - get_total_spend
+    - forecast_by_service
+    - find_commitment_savings
+    - find_untagged_resources
+    - find_cost_anomalies
+    - check_budget_runway
+
+  # Executive/C-Level Tools
+  executive-tools:
+    - get_total_spend
+    - get_month_over_month_growth
+    - forecast_next_month
+    - find_commitment_savings
+    - get_cost_by_service
+
+  # All Tools
+  all-focus-tools:
+    - get_total_spend
+    - get_cost_by_service
+    - get_cost_by_region
+    - get_daily_costs
+    - find_cost_anomalies
+    - forecast_next_month
+    - forecast_by_service
+    - check_budget_runway
+    - find_commitment_savings
+    - find_untagged_resources
+    - get_cost_by_tag
+    - compare_regional_pricing
+    - get_month_over_month_growth
+    - get_top_resources
+    - analyze_credit_usage

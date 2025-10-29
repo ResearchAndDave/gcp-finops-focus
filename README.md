@@ -66,6 +66,34 @@ This repository contains SQL queries and documentation for implementing FOCUS (F
    - Quarterly variance analysis
    - ML-ready dataset export for advanced forecasting
 
+### MCP Toolbox Integration
+
+8. **`mcp/mcp_tools.yaml`** - MCP Toolbox configuration for natural language access
+   - 15 FOCUS tools exposed through MCP protocol
+   - Organized into 5 toolsets by persona
+   - Works with Claude Desktop, Gemini CLI, and custom apps
+   - Enables asking questions like "What did we spend last month?"
+
+9. **`mcp/mcp_setup_guide.md`** - Complete MCP Toolbox setup guide
+   - Installation instructions for all platforms
+   - GCP authentication configuration
+   - Claude Desktop integration
+   - Testing and troubleshooting
+
+10. **`mcp/mcp_example_prompts.md`** - 50+ natural language query examples
+    - Cost analysis questions
+    - Forecasting prompts
+    - Optimization queries
+    - Example conversation flows
+    - Persona-specific use cases
+
+11. **`mcp/mcp_tool_reference.md`** - Complete technical documentation
+    - All 15 MCP tools documented
+    - Parameter specifications
+    - Output formats
+    - Usage examples
+    - Best practices
+
 ## Quick Start
 
 ### Prerequisites
@@ -209,11 +237,118 @@ See `FOCUS_DEPLOYMENT_GUIDE.md` for complete limitations list.
 - Consider creating materialized view
 - Partition by date for large datasets
 
+## MCP Toolbox Integration (Natural Language Access)
+
+Enable natural language querying of your FOCUS data through Claude Desktop, Gemini CLI, or custom applications.
+
+### What is MCP Toolbox?
+
+MCP (Model Context Protocol) Toolbox allows AI assistants to directly query your FOCUS BigQuery data using natural language. Instead of writing SQL, you can ask questions like:
+
+- "What did we spend on Compute Engine last month?"
+- "Show me our fastest growing services"
+- "When will we hit our budget limit?"
+- "Which resources are untagged?"
+
+### Quick Setup
+
+1. **Install MCP Toolbox:**
+   ```bash
+   brew install mcp-toolbox
+   ```
+
+2. **Configure Authentication:**
+   ```bash
+   gcloud auth application-default login
+   ```
+
+3. **Edit `mcp/mcp_tools.yaml`:**
+   - Replace `YOUR_PROJECT_ID` with your GCP project
+   - Replace `YOUR_DATASET` and `YOUR_FOCUS_VIEW` with your BigQuery paths
+
+4. **Test the Server:**
+   ```bash
+   toolbox --tools-file mcp/mcp_tools.yaml --stdio
+   ```
+
+5. **Integrate with Claude Desktop:**
+
+   Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+   ```json
+   {
+     "mcpServers": {
+       "focus-costs": {
+         "command": "toolbox",
+         "args": [
+           "--tools-file",
+           "/absolute/path/to/mcp/mcp_tools.yaml",
+           "--stdio"
+         ]
+       }
+     }
+   }
+   ```
+
+   Restart Claude Desktop and start asking cost questions!
+
+### Available Tools
+
+**Cost Analysis (5 tools):**
+- `get_total_spend` - Monthly spend overview
+- `get_cost_by_service` - Service breakdown
+- `get_cost_by_region` - Regional distribution
+- `get_daily_costs` - Daily trends with moving average
+- `find_cost_anomalies` - Spike detection
+
+**Forecasting (3 tools):**
+- `forecast_next_month` - Monthly projection
+- `forecast_by_service` - Service-level forecasts
+- `check_budget_runway` - Budget exhaustion date
+
+**Optimization (7 tools):**
+- `find_commitment_savings` - CUD analysis
+- `find_untagged_resources` - Governance
+- `get_cost_by_tag` - Tag-based allocation
+- `compare_regional_pricing` - Regional comparison
+- `get_month_over_month_growth` - Growth trends
+- `get_top_resources` - Expensive resources
+- `analyze_credit_usage` - Credit breakdown
+
+### Toolsets by Persona
+
+- **finance-tools** - CFO, Finance Team
+- **engineering-tools** - Engineering Leads, Architects
+- **finops-tools** - FinOps Practitioners
+- **executive-tools** - C-Level reporting
+- **all-focus-tools** - Full access
+
+### Documentation
+
+- **Setup Guide:** `mcp/mcp_setup_guide.md` - Complete installation instructions
+- **Example Prompts:** `mcp/mcp_example_prompts.md` - 50+ natural language examples
+- **Tool Reference:** `mcp/mcp_tool_reference.md` - Technical documentation
+
+### Example Conversation
+
+```
+You: "What did we spend last month?"
+AI: You spent $12,456.78 last month with $1,234.56 in savings from discounts.
+
+You: "Which services drove that cost?"
+AI: Your top services were: Compute Engine ($4,567), Cloud Storage ($2,345),
+    and BigQuery ($1,876).
+
+You: "Forecast what we'll spend next month"
+AI: Based on trends, you'll likely spend $13,245 next month (6.3% increase).
+```
+
 ## Resources
 
 - [FOCUS Specification](https://focus.finops.org/)
 - [GCP Billing Export Docs](https://cloud.google.com/billing/docs/how-to/export-data-bigquery)
 - [BigQuery Views Docs](https://cloud.google.com/bigquery/docs/views)
 - [GCP FOCUS Looker Template](https://github.com/looker-open-source/google_cloud_focus)
+- [MCP Toolbox Documentation](https://googleapis.github.io/genai-toolbox/)
+- [Model Context Protocol Spec](https://spec.modelcontextprotocol.io/)
 - [Original PDF Guide](focus_guide_v1.pdf)
 
