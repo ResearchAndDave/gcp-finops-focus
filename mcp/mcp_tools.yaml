@@ -563,6 +563,112 @@ tools:
       GROUP BY month, credit_type
       ORDER BY month DESC, total_credit_amount;
 
+  # --------------------------------------------------------------------------
+  # Tool 16: Forecast Amortized Costs Month over Month
+  # --------------------------------------------------------------------------
+  forecast_amortized_costs:
+    kind: bigquery-sql
+    source: focus-bigquery
+    description: "Forecast amortized costs month-over-month by service dimensions. Shows trends, variance from average, and next month forecast. Based on FOCUS spec use case."
+    parameters:
+      - name: months_back
+        type: integer
+        description: "Number of months of history to analyze (e.g., 12)"
+      - name: min_cost_threshold
+        type: float
+        description: "Minimum cost to include in results (e.g., 10.00)"
+    statement: |
+      WITH monthly_amortized_costs AS (
+        SELECT
+          DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as billing_month,
+          ProviderName,
+          ServiceCategory,
+          ServiceName,
+          ChargeCategory,
+          ROUND(SUM(EffectiveCost), 2) as total_effective_cost
+        FROM `YOUR_PROJECT_ID.YOUR_DATASET.YOUR_FOCUS_VIEW`
+        WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL @months_back MONTH)
+        GROUP BY billing_month, ProviderName, ServiceCategory, ServiceName, ChargeCategory
+      ),
+      cost_trends AS (
+        SELECT
+          billing_month,
+          ProviderName,
+          ServiceCategory,
+          ServiceName,
+          ChargeCategory,
+          total_effective_cost,
+          LAG(total_effective_cost, 1) OVER (
+            PARTITION BY ProviderName, ServiceCategory, ServiceName, ChargeCategory
+            ORDER BY billing_month
+          ) as prev_month_cost,
+          AVG(total_effective_cost) OVER (
+            PARTITION BY ProviderName, ServiceCategory, ServiceName, ChargeCategory
+            ORDER BY billing_month
+            ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+          ) as three_month_avg
+        FROM monthly_amortized_costs
+      ),
+      growth_metrics AS (
+        SELECT
+          billing_month,
+          ProviderName,
+          ServiceCategory,
+          ServiceName,
+          ChargeCategory,
+          total_effective_cost,
+          prev_month_cost,
+          three_month_avg,
+          ROUND(total_effective_cost - prev_month_cost, 2) as mom_change,
+          ROUND((total_effective_cost - prev_month_cost) / NULLIF(prev_month_cost, 0) * 100, 2) as mom_change_pct,
+          ROUND(total_effective_cost - three_month_avg, 2) as variance_from_avg,
+          ROUND((total_effective_cost - three_month_avg) / NULLIF(three_month_avg, 0) * 100, 2) as variance_from_avg_pct
+        FROM cost_trends
+        WHERE prev_month_cost IS NOT NULL
+      ),
+      forecast_next_month AS (
+        SELECT
+          ServiceCategory,
+          ServiceName,
+          ChargeCategory,
+          MAX(CASE WHEN billing_month = (SELECT MAX(billing_month) FROM growth_metrics)
+            THEN total_effective_cost END) as current_month_cost,
+          ROUND(
+            MAX(CASE WHEN billing_month = (SELECT MAX(billing_month) FROM growth_metrics)
+              THEN total_effective_cost END) *
+            (1 + AVG(CASE WHEN billing_month >= DATE_SUB((SELECT MAX(billing_month) FROM growth_metrics), INTERVAL 6 MONTH)
+              THEN mom_change_pct END) / 100),
+            2
+          ) as forecast_next_month
+        FROM growth_metrics
+        GROUP BY ServiceCategory, ServiceName, ChargeCategory
+      )
+      SELECT
+        gm.billing_month,
+        gm.ProviderName,
+        gm.ServiceCategory,
+        gm.ServiceName,
+        gm.ChargeCategory,
+        gm.total_effective_cost as amortized_cost,
+        gm.prev_month_cost,
+        gm.mom_change,
+        gm.mom_change_pct,
+        ROUND(gm.three_month_avg, 2) as three_month_avg,
+        gm.variance_from_avg_pct,
+        CASE
+          WHEN gm.billing_month = (SELECT MAX(billing_month) FROM growth_metrics)
+          THEN f.forecast_next_month
+          ELSE NULL
+        END as forecast_next_month
+      FROM growth_metrics gm
+      LEFT JOIN forecast_next_month f
+        ON gm.ServiceCategory = f.ServiceCategory
+        AND gm.ServiceName = f.ServiceName
+        AND gm.ChargeCategory = f.ChargeCategory
+      WHERE gm.total_effective_cost > @min_cost_threshold
+      ORDER BY gm.billing_month DESC, gm.total_effective_cost DESC
+      LIMIT 100;
+
 # ==============================================================================
 # TOOLSETS - Organized by Persona
 # ==============================================================================
@@ -574,6 +680,7 @@ toolsets:
     - get_daily_costs
     - check_budget_runway
     - forecast_next_month
+    - forecast_amortized_costs
     - get_month_over_month_growth
     - analyze_credit_usage
 
@@ -590,6 +697,7 @@ toolsets:
   finops-tools:
     - get_total_spend
     - forecast_by_service
+    - forecast_amortized_costs
     - find_commitment_savings
     - find_untagged_resources
     - find_cost_anomalies
@@ -600,6 +708,7 @@ toolsets:
     - get_total_spend
     - get_month_over_month_growth
     - forecast_next_month
+    - forecast_amortized_costs
     - find_commitment_savings
     - get_cost_by_service
 
@@ -612,6 +721,7 @@ toolsets:
     - find_cost_anomalies
     - forecast_next_month
     - forecast_by_service
+    - forecast_amortized_costs
     - check_budget_runway
     - find_commitment_savings
     - find_untagged_resources

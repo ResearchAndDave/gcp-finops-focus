@@ -571,7 +571,130 @@ ORDER BY qa.quarter_start DESC;
 
 
 -- ============================================================================
--- FORECAST 10: Machine Learning-Ready Dataset Export
+-- FORECAST 10: Amortized Cost Forecast - Month over Month by Service Dimensions
+-- ============================================================================
+-- Question: How are amortized costs trending month over month across services?
+-- Persona: Finance Team, CFO, Controller
+-- Capability: Forecasting, Financial Planning
+-- Method: Month-over-month amortized cost analysis by service dimensions
+-- FOCUS Use Case: https://focus.finops.org/use-case/forecast-amortized-costs/
+
+WITH monthly_amortized_costs AS (
+  SELECT
+    DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as billing_month,
+    ProviderName,
+    ServiceCategory,
+    ServiceName,
+    ChargeCategory,
+    ROUND(SUM(EffectiveCost), 2) as total_effective_cost
+  FROM `your-project.your-dataset.focus_v1_0`
+  WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+  GROUP BY billing_month, ProviderName, ServiceCategory, ServiceName, ChargeCategory
+),
+cost_trends AS (
+  SELECT
+    billing_month,
+    ProviderName,
+    ServiceCategory,
+    ServiceName,
+    ChargeCategory,
+    total_effective_cost,
+    -- Previous month cost
+    LAG(total_effective_cost, 1) OVER (
+      PARTITION BY ProviderName, ServiceCategory, ServiceName, ChargeCategory
+      ORDER BY billing_month
+    ) as prev_month_cost,
+    -- Previous quarter same month (for seasonality)
+    LAG(total_effective_cost, 3) OVER (
+      PARTITION BY ProviderName, ServiceCategory, ServiceName, ChargeCategory
+      ORDER BY billing_month
+    ) as prev_quarter_cost,
+    -- 3-month moving average
+    AVG(total_effective_cost) OVER (
+      PARTITION BY ProviderName, ServiceCategory, ServiceName, ChargeCategory
+      ORDER BY billing_month
+      ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+    ) as three_month_avg
+  FROM monthly_amortized_costs
+),
+growth_metrics AS (
+  SELECT
+    billing_month,
+    ProviderName,
+    ServiceCategory,
+    ServiceName,
+    ChargeCategory,
+    total_effective_cost,
+    prev_month_cost,
+    three_month_avg,
+    -- Month-over-month change
+    ROUND(total_effective_cost - prev_month_cost, 2) as mom_change,
+    ROUND((total_effective_cost - prev_month_cost) / NULLIF(prev_month_cost, 0) * 100, 2) as mom_change_pct,
+    -- Variance from 3-month average
+    ROUND(total_effective_cost - three_month_avg, 2) as variance_from_avg,
+    ROUND((total_effective_cost - three_month_avg) / NULLIF(three_month_avg, 0) * 100, 2) as variance_from_avg_pct
+  FROM cost_trends
+  WHERE prev_month_cost IS NOT NULL  -- Only show trends with historical data
+),
+forecast_next_month AS (
+  SELECT
+    ServiceCategory,
+    ServiceName,
+    ChargeCategory,
+    -- Use most recent month as baseline
+    MAX(CASE WHEN billing_month = (SELECT MAX(billing_month) FROM growth_metrics)
+      THEN total_effective_cost END) as current_month_cost,
+    -- Average monthly growth rate over last 6 months
+    AVG(CASE WHEN billing_month >= DATE_SUB((SELECT MAX(billing_month) FROM growth_metrics), INTERVAL 6 MONTH)
+      THEN mom_change_pct END) as avg_growth_rate_6m,
+    -- Forecast next month
+    ROUND(
+      MAX(CASE WHEN billing_month = (SELECT MAX(billing_month) FROM growth_metrics)
+        THEN total_effective_cost END) *
+      (1 + AVG(CASE WHEN billing_month >= DATE_SUB((SELECT MAX(billing_month) FROM growth_metrics), INTERVAL 6 MONTH)
+        THEN mom_change_pct END) / 100),
+      2
+    ) as forecast_next_month
+  FROM growth_metrics
+  GROUP BY ServiceCategory, ServiceName, ChargeCategory
+)
+SELECT
+  gm.billing_month,
+  gm.ProviderName,
+  gm.ServiceCategory,
+  gm.ServiceName,
+  gm.ChargeCategory,
+  gm.total_effective_cost as amortized_cost,
+  gm.prev_month_cost,
+  gm.mom_change,
+  gm.mom_change_pct,
+  ROUND(gm.three_month_avg, 2) as three_month_avg,
+  gm.variance_from_avg,
+  gm.variance_from_avg_pct,
+  -- Add forecast for most recent month
+  CASE
+    WHEN gm.billing_month = (SELECT MAX(billing_month) FROM growth_metrics)
+    THEN f.forecast_next_month
+    ELSE NULL
+  END as forecast_next_month
+FROM growth_metrics gm
+LEFT JOIN forecast_next_month f
+  ON gm.ServiceCategory = f.ServiceCategory
+  AND gm.ServiceName = f.ServiceName
+  AND gm.ChargeCategory = f.ChargeCategory
+WHERE gm.total_effective_cost > 10  -- Filter out negligible costs
+ORDER BY gm.billing_month DESC, gm.total_effective_cost DESC;
+
+-- Expected Output: Month-over-month amortized cost trends with forecasts
+-- Use: Financial planning, budget variance analysis, service-level forecasting
+-- Notes:
+--   - EffectiveCost represents amortized costs (includes commitment amortization)
+--   - Breaks down by Provider, ServiceCategory, ServiceName, ChargeCategory per FOCUS spec
+--   - Shows month-over-month trends and forecasts next month based on 6-month average growth
+
+
+-- ============================================================================
+-- FORECAST 11: Machine Learning-Ready Dataset Export
 -- ============================================================================
 -- Question: Export data for advanced ML-based forecasting
 -- Persona: Data Science Team, FinOps Practitioner

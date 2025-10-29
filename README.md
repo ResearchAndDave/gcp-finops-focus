@@ -54,7 +54,7 @@ This repository contains SQL queries and documentation for implementing FOCUS (F
    - Budget tracking
    - And 13 more common FinOps use cases
 
-7. **`focus_forecasting_queries.sql`** - 10 comprehensive forecasting queries
+7. **`focus_forecasting_queries.sql`** - 11 comprehensive forecasting queries
    - Linear trend forecasts (3-month projections)
    - Service-level forecasting with confidence intervals
    - Seasonality-adjusted predictions
@@ -64,12 +64,13 @@ This repository contains SQL queries and documentation for implementing FOCUS (F
    - Budget runway analysis
    - Team/project-level forecasts
    - Quarterly variance analysis
+   - Amortized cost forecasting (FOCUS use case)
    - ML-ready dataset export for advanced forecasting
 
 ### MCP Toolbox Integration
 
 8. **`mcp/mcp_tools.yaml`** - MCP Toolbox configuration for natural language access
-   - 15 FOCUS tools exposed through MCP protocol
+   - 16 FOCUS tools exposed through MCP protocol
    - Organized into 5 toolsets by persona
    - Works with Claude Desktop, Gemini CLI, and custom apps
    - Enables asking questions like "What did we spend last month?"
@@ -88,7 +89,7 @@ This repository contains SQL queries and documentation for implementing FOCUS (F
     - Persona-specific use cases
 
 11. **`mcp/mcp_tool_reference.md`** - Complete technical documentation
-    - All 15 MCP tools documented
+    - All 16 MCP tools documented
     - Parameter specifications
     - Output formats
     - Usage examples
@@ -300,9 +301,10 @@ MCP (Model Context Protocol) Toolbox allows AI assistants to directly query your
 - `get_daily_costs` - Daily trends with moving average
 - `find_cost_anomalies` - Spike detection
 
-**Forecasting (3 tools):**
+**Forecasting (4 tools):**
 - `forecast_next_month` - Monthly projection
 - `forecast_by_service` - Service-level forecasts
+- `forecast_amortized_costs` - Amortized cost trends by service dimensions (FOCUS spec)
 - `check_budget_runway` - Budget exhaustion date
 
 **Optimization (7 tools):**
