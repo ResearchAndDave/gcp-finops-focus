@@ -496,7 +496,7 @@ WITH quarterly_actuals AS (
     ROUND(SUM(EffectiveCost), 2) as quarterly_cost,
     COUNT(DISTINCT DATE(ChargePeriodStart)) as days_of_data,
     DATE_DIFF(
-      DATE_SUB(DATE_TRUNC(DATE_ADD(DATE(ChargePeriodStart), INTERVAL 3 MONTH), QUARTER), INTERVAL 1 DAY),
+      DATE_SUB(DATE_TRUNC(DATE_ADD(DATE_TRUNC(DATE(ChargePeriodStart), QUARTER), INTERVAL 3 MONTH), QUARTER), INTERVAL 1 DAY),
       DATE_TRUNC(DATE(ChargePeriodStart), QUARTER),
       DAY
     ) + 1 as total_days_in_quarter
@@ -583,7 +583,7 @@ WITH monthly_amortized_costs AS (
   SELECT
     DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as billing_month,
     ProviderName,
-    ServiceCategory,
+    TO_JSON_STRING(ServiceCategory) as ServiceCategory,
     ServiceName,
     ChargeCategory,
     ROUND(SUM(EffectiveCost), 2) as total_effective_cost
@@ -701,39 +701,58 @@ ORDER BY gm.billing_month DESC, gm.total_effective_cost DESC;
 -- Capability: Forecasting, Advanced Analytics
 -- Method: Feature engineering for time series forecasting
 
+WITH daily_aggregates AS (
+  SELECT
+    DATE(ChargePeriodStart) as date,
+    EXTRACT(YEAR FROM DATE(ChargePeriodStart)) as year,
+    EXTRACT(MONTH FROM DATE(ChargePeriodStart)) as month,
+    EXTRACT(DAYOFWEEK FROM DATE(ChargePeriodStart)) as day_of_week,
+    EXTRACT(DAYOFYEAR FROM DATE(ChargePeriodStart)) as day_of_year,
+    CASE WHEN EXTRACT(DAYOFWEEK FROM DATE(ChargePeriodStart)) IN (1, 7) THEN 1 ELSE 0 END as is_weekend,
+    ServiceName,
+    RegionId,
+    PricingCategory,
+    -- Aggregated metrics
+    ROUND(SUM(EffectiveCost), 2) as daily_cost,
+    ROUND(SUM(BilledCost), 2) as daily_billed_cost,
+    ROUND(SUM(ConsumedQuantity), 2) as daily_quantity,
+    COUNT(*) as charge_count,
+    COUNT(DISTINCT ResourceId) as unique_resources,
+    -- Credits received
+    ROUND(SUM(BilledCost) - SUM(EffectiveCost), 2) as daily_credits
+  FROM `your-project.your-dataset.focus_v1_0`
+  WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
+    AND ChargeCategory = 'usage'
+  GROUP BY date, year, month, day_of_week, day_of_year, is_weekend, ServiceName, RegionId, PricingCategory
+)
 SELECT
-  DATE(ChargePeriodStart) as date,
-  EXTRACT(YEAR FROM DATE(ChargePeriodStart)) as year,
-  EXTRACT(MONTH FROM DATE(ChargePeriodStart)) as month,
-  EXTRACT(DAYOFWEEK FROM DATE(ChargePeriodStart)) as day_of_week,
-  EXTRACT(DAYOFYEAR FROM DATE(ChargePeriodStart)) as day_of_year,
-  CASE WHEN EXTRACT(DAYOFWEEK FROM DATE(ChargePeriodStart)) IN (1, 7) THEN 1 ELSE 0 END as is_weekend,
+  date,
+  year,
+  month,
+  day_of_week,
+  day_of_year,
+  is_weekend,
   ServiceName,
   RegionId,
   PricingCategory,
-  -- Aggregated metrics
-  ROUND(SUM(EffectiveCost), 2) as daily_cost,
-  ROUND(SUM(BilledCost), 2) as daily_billed_cost,
-  ROUND(SUM(ConsumedQuantity), 2) as daily_quantity,
-  COUNT(*) as charge_count,
-  COUNT(DISTINCT ResourceId) as unique_resources,
-  -- Rolling averages (lag features)
-  ROUND(AVG(SUM(EffectiveCost)) OVER (
+  daily_cost,
+  daily_billed_cost,
+  daily_quantity,
+  charge_count,
+  unique_resources,
+  daily_credits,
+  -- Rolling averages (lag features) - now applied to aggregated data
+  ROUND(AVG(daily_cost) OVER (
     PARTITION BY ServiceName
-    ORDER BY DATE(ChargePeriodStart)
+    ORDER BY date
     ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING
   ), 2) as cost_7day_avg,
-  ROUND(AVG(SUM(EffectiveCost)) OVER (
+  ROUND(AVG(daily_cost) OVER (
     PARTITION BY ServiceName
-    ORDER BY DATE(ChargePeriodStart)
+    ORDER BY date
     ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING
-  ), 2) as cost_30day_avg,
-  -- Credits received
-  ROUND(SUM(BilledCost) - SUM(EffectiveCost), 2) as daily_credits
-FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
-  AND ChargeCategory = 'usage'
-GROUP BY date, year, month, day_of_week, day_of_year, is_weekend, ServiceName, RegionId, PricingCategory
+  ), 2) as cost_30day_avg
+FROM daily_aggregates
 ORDER BY date DESC, ServiceName;
 
 -- Expected Output: ML-ready time series dataset
