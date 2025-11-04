@@ -109,17 +109,25 @@ ORDER BY month DESC, commitment_savings DESC;
 -- Persona: FinOps Practitioner, Procurement
 -- Capability: Rate Optimization
 
+WITH pricing_by_month AS (
+  SELECT
+    DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as month,
+    PricingCategory,
+    ROUND(SUM(EffectiveCost), 2) as total_cost,
+    COUNT(*) as number_of_charges
+  FROM `your-project.your-dataset.focus_v1_0`
+  WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+    AND ChargeCategory = 'usage'
+    AND PricingCategory IS NOT NULL
+  GROUP BY month, PricingCategory
+)
 SELECT
-  DATE_TRUNC(DATE(ChargePeriodStart), MONTH) as month,
+  month,
   PricingCategory,
-  ROUND(SUM(EffectiveCost), 2) as total_cost,
-  COUNT(*) as number_of_charges,
-  ROUND(SUM(EffectiveCost) / SUM(SUM(EffectiveCost)) OVER (PARTITION BY DATE_TRUNC(DATE(ChargePeriodStart), MONTH)) * 100, 2) as percent_of_monthly_spend
-FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
-  AND ChargeCategory = 'usage'
-  AND PricingCategory IS NOT NULL
-GROUP BY month, PricingCategory
+  total_cost,
+  number_of_charges,
+  ROUND(100.0 * total_cost / SUM(total_cost) OVER (PARTITION BY month), 2) as percent_of_monthly_spend
+FROM pricing_by_month
 ORDER BY month DESC, total_cost DESC;
 
 -- Expected Output: Monthly breakdown of standard vs committed pricing
@@ -159,19 +167,27 @@ LIMIT 50;
 -- Persona: FinOps Practitioner, Finance
 -- Capability: Cost Allocation, Forecasting
 
+WITH daily_costs AS (
+  SELECT
+    DATE(ChargePeriodStart) as usage_date,
+    ROUND(SUM(EffectiveCost), 2) as daily_cost,
+    COUNT(DISTINCT ServiceName) as services_used,
+    COUNT(*) as number_of_charges
+  FROM `your-project.your-dataset.focus_v1_0`
+  WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+    AND ChargeCategory = 'usage'
+  GROUP BY usage_date
+)
 SELECT
-  DATE(ChargePeriodStart) as usage_date,
-  ROUND(SUM(EffectiveCost), 2) as daily_cost,
-  ROUND(AVG(SUM(EffectiveCost)) OVER (
-    ORDER BY DATE(ChargePeriodStart)
+  usage_date,
+  daily_cost,
+  ROUND(AVG(daily_cost) OVER (
+    ORDER BY usage_date
     ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
   ), 2) as seven_day_avg,
-  COUNT(DISTINCT ServiceName) as services_used,
-  COUNT(*) as number_of_charges
-FROM `your-project.your-dataset.focus_v1_0`
-WHERE DATE(ChargePeriodStart) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
-  AND ChargeCategory = 'usage'
-GROUP BY usage_date
+  services_used,
+  number_of_charges
+FROM daily_costs
 ORDER BY usage_date DESC;
 
 -- Expected Output: Daily costs with 7-day moving average
